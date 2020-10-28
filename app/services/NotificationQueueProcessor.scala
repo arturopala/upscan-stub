@@ -27,8 +27,9 @@ import scala.concurrent.duration._
 
 class NotificationQueueProcessor(
   notificationService: NotificationSender,
-  maximumRetryCount: Int     = 10,
-  retryDelay: FiniteDuration = 30 seconds)(implicit actorSystem: ActorSystem) {
+  maximumRetryCount: Int = 10,
+  retryDelay: FiniteDuration = 30 seconds
+)(implicit actorSystem: ActorSystem) {
 
   private val notificationProcessingActor =
     actorSystem.actorOf(QueueProcessingActor(notificationService, maximumRetryCount, retryDelay))
@@ -39,6 +40,7 @@ class NotificationQueueProcessor(
 }
 
 case class EnqueueNotification(notification: Notification)
+case object ProcessQueue
 case class NotificationProcessedSuccessfully(notification: Notification)
 case class NotificationProcessingFailed(e: Throwable, notification: Notification)
 
@@ -52,7 +54,8 @@ object QueueProcessingActor {
 }
 
 class QueueProcessingActor(notificationSender: NotificationSender, maximumRetryCount: Int, retryDelay: FiniteDuration)
-    extends Actor with ActorLogging {
+    extends Actor
+    with ActorLogging {
 
   implicit val timeout: Timeout = Timeout(5 seconds)
 
@@ -62,28 +65,30 @@ class QueueProcessingActor(notificationSender: NotificationSender, maximumRetryC
 
   private var queue = Queue[Notification]()
 
+  context.system.scheduler.schedule(Duration.apply(10, "s"), Duration.apply(30, "s")) {
+    self ! ProcessQueue
+  }
+
   override def receive: Receive = {
+    case ProcessQueue =>
+      processQueue()
     case EnqueueNotification(file) =>
       queue = queue.enqueue(file)
-      processQueue()
     case NotificationProcessedSuccessfully(notification) =>
       log.info(s"Notification $notification sent successfully")
       running = false
-      processQueue()
     case NotificationProcessingFailed(error, notification) =>
       running = false
-      processQueue()
       if (notification.retryCount < maximumRetryCount) {
         log.warning(s"Sending notification $notification failed. Retrying", error)
         context.system.scheduler.scheduleOnce(retryDelay, self, EnqueueNotification(notification.retried))
-      } else {
+      } else
         log.warning(s"Sending notification $notification failed. Retry limit reached", error)
-      }
   }
 
   private def processQueue(): Unit =
     for ((queueTop, newQueue) <- queue.dequeueOption if !running) {
-      queue   = newQueue
+      queue = newQueue
       running = true
       notificationSender
         .sendNotification(queueTop.fileData)
