@@ -37,10 +37,11 @@ object Reference {
 
     override def writes(reference: Reference): JsValue = JsString(reference.value)
 
-    override def reads(json: JsValue): JsResult[Reference] = json.validate[String] match {
-      case JsSuccess(reference, _) => JsSuccess(Reference(reference))
-      case error: JsError          => error
-    }
+    override def reads(json: JsValue): JsResult[Reference] =
+      json.validate[String] match {
+        case JsSuccess(reference, _) => JsSuccess(Reference(reference))
+        case error: JsError          => error
+      }
   }
 }
 
@@ -55,7 +56,8 @@ case class UploadPostForm(
   acl: String,
   key: String,
   callbackUrl: String,
-  redirectAfterSuccess: Option[String]
+  redirectAfterSuccess: Option[String],
+  redirectAfterError: Option[String] = None
 )
 
 //Internal model of uploaded file
@@ -87,7 +89,8 @@ object ContentLengthRange {
     val json: JsValue = Json.parse(policy)
 
     (json \ "conditions").asOpt[Seq[Seq[JsValue]]].flatMap {
-      case Seq(Seq(JsString("content-length-range"), mi, mx), _*) => Some(ContentLengthRange(mi.asOpt[Long], mx.asOpt[Long]))
+      case Seq(Seq(JsString("content-length-range"), mi, mx), _*) =>
+        Some(ContentLengthRange(mi.asOpt[Long], mx.asOpt[Long]))
       case _ => None
     }
   }

@@ -35,63 +35,66 @@ import utils.ApplicativeHelpers
 
 import scala.xml.Node
 
-class UploadController @Inject()(
+class UploadController @Inject() (
   storageService: FileStorageService,
   notificationQueueProcessor: NotificationQueueProcessor,
   virusScanner: VirusScanner,
   clock: Clock,
-  cc: ControllerComponents)
-    extends BackendController(cc) {
+  cc: ControllerComponents
+) extends BackendController(cc) {
 
   private val logger = Logger(this.getClass)
 
   private val uploadForm: Form[UploadPostForm] = Form(
     mapping(
-      "x-amz-algorithm"         -> nonEmptyText.verifying("Invalid algorithm", { "AWS4-HMAC-SHA256" == _ }),
+      "x-amz-algorithm"         -> nonEmptyText.verifying("Invalid algorithm", "AWS4-HMAC-SHA256" == _),
       "x-amz-credential"        -> nonEmptyText,
       "x-amz-date"              -> nonEmptyText.verifying(pattern("^[0-9]{8}T[0-9]{6}Z$".r, "Invalid x-amz-date format")),
       "policy"                  -> nonEmptyText,
       "x-amz-signature"         -> nonEmptyText,
-      "acl"                     -> nonEmptyText.verifying("Invalid acl", { "private" == _ }),
+      "acl"                     -> nonEmptyText.verifying("Invalid acl", "private" == _),
       "key"                     -> nonEmptyText,
       "x-amz-meta-callback-url" -> nonEmptyText,
-      "success_action_redirect" -> optional(text)
+      "success_action_redirect" -> optional(text),
+      "error_action_redirect"   -> optional(text)
     )(UploadPostForm.apply)(UploadPostForm.unapply)
   )
 
-  def upload(): Action[MultipartFormData[TemporaryFile]] = Action(parse.multipartFormData) { implicit request =>
-    val validatedForm: Either[Seq[String], UploadPostForm] = uploadForm
-      .bindFromRequest()
-      .fold(
-        formWithErrors => {
-          val errors = formWithErrors.errors.map(_.toString)
-          logger.debug(s"Error binding uploaded form: [$errors].")
-          Left(errors)
-        },
-        formValues => {
-          logger.debug(s"Received uploaded form: [$formValues].")
-          Right(formValues)
-        }
+  def upload(): Action[MultipartFormData[TemporaryFile]] =
+    Action(parse.multipartFormData) { implicit request =>
+      val validatedForm: Either[Seq[String], UploadPostForm] = uploadForm
+        .bindFromRequest()
+        .fold(
+          formWithErrors => {
+            val errors = formWithErrors.errors.map(_.toString)
+            logger.debug(s"Error binding uploaded form: [$errors].")
+            Left(errors)
+          },
+          formValues => {
+            logger.debug(s"Received uploaded form: [$formValues].")
+            Right(formValues)
+          }
+        )
+
+      val validatedFile: Either[Seq[String], MultipartFormData.FilePart[TemporaryFile]] =
+        request.body.file("file").map(Right(_)).getOrElse(Left(Seq("'file' field not found")))
+
+      val validatedInput: Either[Traversable[String], (UploadPostForm, MultipartFormData.FilePart[TemporaryFile])] =
+        ApplicativeHelpers.product(validatedForm, validatedFile)
+
+      validatedInput.fold(
+        errors => BadRequest(invalidRequestBody("400", errors.mkString(", "))),
+        validInput =>
+          withPolicyChecked(validInput._1, validInput._2) {
+            storeAndNotify(validInput._1, validInput._2)
+            validInput._1.redirectAfterSuccess.fold(NoContent)(SeeOther)
+          }
       )
-
-    val validatedFile: Either[Seq[String], MultipartFormData.FilePart[TemporaryFile]] =
-      request.body.file("file").map(Right(_)).getOrElse(Left(Seq("'file' field not found")))
-
-    val validatedInput: Either[Traversable[String], (UploadPostForm, MultipartFormData.FilePart[TemporaryFile])] =
-      ApplicativeHelpers.product(validatedForm, validatedFile)
-
-    validatedInput.fold(
-      errors => BadRequest(invalidRequestBody("400", errors.mkString(", "))),
-      validInput =>
-        withPolicyChecked(validInput._1, validInput._2) {
-          storeAndNotify(validInput._1, validInput._2)
-          validInput._1.redirectAfterSuccess.fold(NoContent)(SeeOther)
-      }
-    )
-  }
+    }
 
   private def withPolicyChecked(form: UploadPostForm, file: MultipartFormData.FilePart[Files.TemporaryFile])(
-    block: => Result): Result = {
+    block: => Result
+  ): Result = {
     import utils.Implicits.Base64StringOps
 
     val policyJson: String = form.policy.base64decode()
@@ -105,16 +108,32 @@ class UploadController @Inject()(
         case _ => None
       }
 
-    maybeInvalidContentLength match {
-      case Some(awsError) => BadRequest(invalidRequestBody(awsError.code, awsError.message))
-      case None           => block
+    val maybeErrorCaseFile: Option[AWSError] =
+      if (file.filename.startsWith("reject."))
+        Some(
+          AWSError(
+            file.filename.drop(7).takeWhile(_ != '.'),
+            "we were instructed to reject this upload",
+            ""
+          )
+        )
+      else None
+
+    maybeErrorCaseFile.orElse(maybeInvalidContentLength) match {
+      case Some(awsError) =>
+        form.redirectAfterError match {
+          case Some(url) => Redirect(url, queryParamsFor(form.key, awsError), 303)
+          case None      => BadRequest(invalidRequestBody(awsError.code, awsError.message))
+        }
+      case None => block
     }
   }
 
   private def checkFileSizeConstraints(
     fileSize: Long,
     minMaybe: Option[Long],
-    maxMaybe: Option[Long]): Option[AWSError] = {
+    maxMaybe: Option[Long]
+  ): Option[AWSError] = {
     val minErrorMaybe: Option[AWSError] = for {
       min <- minMaybe
       if fileSize < min
@@ -128,35 +147,39 @@ class UploadController @Inject()(
     }
   }
 
-  private def storeAndNotify(form: UploadPostForm, file: MultipartFormData.FilePart[Files.TemporaryFile])(
-    implicit request: RequestHeader): Unit = {
+  private def storeAndNotify(form: UploadPostForm, file: MultipartFormData.FilePart[Files.TemporaryFile])(implicit
+    request: RequestHeader
+  ): Unit = {
     val reference = Reference(form.key)
 
     val fileId = storageService.store(file.ref)
     val storedFile =
       storageService.get(fileId).getOrElse(throw new IllegalStateException("The file should have been stored"))
 
-    val foundVirus: ScanningResult = virusScanner.checkIfClean(storedFile)
+    val foundVirus: ScanningResult =
+      if (file.filename.startsWith("infected."))
+        VirusFound(file.filename.drop(9).takeWhile(_ != '.'))
+      else virusScanner.checkIfClean(storedFile)
 
     val fileData = foundVirus match {
-      case Clean => {
+      case Clean =>
         val fileUploadDetails = UploadDetails(
           clock.instant(),
           generateChecksum(storedFile.body),
           mapFilenameToMimeType(filename = file.filename),
-          file.filename)
+          file.filename
+        )
         UploadedFile(
-          callbackUrl   = new URL(form.callbackUrl),
-          reference     = reference,
-          downloadUrl   = new URL(buildDownloadUrl(fileId = fileId)),
+          callbackUrl = new URL(form.callbackUrl),
+          reference = reference,
+          downloadUrl = new URL(buildDownloadUrl(fileId = fileId)),
           uploadDetails = fileUploadDetails
         )
-      }
       case VirusFound(details) =>
         QuarantinedFile(
           callbackUrl = new URL(form.callbackUrl),
-          reference   = reference,
-          error       = details
+          reference = reference,
+          error = details
         )
     }
 
@@ -183,6 +206,15 @@ class UploadController @Inject()(
       <Resource>NoFileReference</Resource>
       <RequestId>SomeRequestId</RequestId>
     </Error>""")
+
+  private def queryParamsFor(key: String, awsError: AWSError): Map[String, Seq[String]] =
+    Map(
+      "key"            -> Seq(key),
+      "errorCode"      -> Seq(awsError.code),
+      "errorMessage"   -> Seq(awsError.message),
+      "errorResource"  -> Seq("NoFileReference"),
+      "errorRequestId" -> Seq("SomeRequestId")
+    )
 
   def generateChecksum(fileBytes: Array[Byte]): String = {
     val checksum = MessageDigest.getInstance("SHA-256").digest(fileBytes)
