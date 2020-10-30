@@ -24,6 +24,7 @@ import model.ProcessedFile
 import scala.collection.immutable.Queue
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
+import scala.util.Random
 
 class NotificationQueueProcessor(
   notificationService: NotificationSender,
@@ -65,15 +66,15 @@ class QueueProcessingActor(notificationSender: NotificationSender, maximumRetryC
 
   private var queue = Queue[Notification]()
 
-  context.system.scheduler.schedule(Duration.apply(10, "s"), Duration.apply(30, "s")) {
-    self ! ProcessQueue
-  }
-
   override def receive: Receive = {
     case ProcessQueue =>
       processQueue()
     case EnqueueNotification(file) =>
       queue = queue.enqueue(file)
+      val delay = Random.nextInt(0 + 20)
+      context.system.scheduler.scheduleOnce(FiniteDuration(delay, "s")) {
+        self ! processQueue
+      }
     case NotificationProcessedSuccessfully(notification) =>
       log.info(s"Notification $notification sent successfully")
       running = false

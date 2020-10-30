@@ -76,17 +76,20 @@ object ErrorDetails {
   implicit val formatsErrorDetails: Format[ErrorDetails] = Json.format[ErrorDetails]
 }
 
-class HttpNotificationSender @Inject()(httpClient: HttpClient)(implicit ec: ExecutionContext)
+class HttpNotificationSender @Inject() (httpClient: HttpClient)(implicit ec: ExecutionContext)
     extends NotificationSender {
 
   import uk.gov.hmrc.http.HttpReads.Implicits._
 
   private val logger = Logger(this.getClass)
 
-  override def sendNotification(uploadedFile: ProcessedFile): Future[Unit] = uploadedFile match {
-    case f: UploadedFile    => notifySuccessfulCallback(f)
-    case f: QuarantinedFile => notifyFailedCallback(f)
-  }
+  override def sendNotification(uploadedFile: ProcessedFile): Future[Unit] =
+    uploadedFile match {
+      case f: UploadedFile      => notifySuccessfulCallback(f)
+      case f: QuarantinedFile   => notifyFailedCallback(f.reference, "QUARANTINE", f.error, f.callbackUrl)
+      case f: RejectedFile      => notifyFailedCallback(f.reference, "REJECT", f.error, f.callbackUrl)
+      case f: UnknownReasonFile => notifyFailedCallback(f.reference, "UNKNOWN", f.error, f.callbackUrl)
+    }
 
   private def notifySuccessfulCallback(uploadedFile: UploadedFile): Future[Unit] = {
 
@@ -99,24 +102,29 @@ class HttpNotificationSender @Inject()(httpClient: HttpClient)(implicit ec: Exec
       .POST[ReadyCallbackBody, HttpResponse](uploadedFile.callbackUrl.toString, callback)
       .map { httpResponse =>
         logger.info(
-          s"""File ready notification: [${callback}], sent to service with callbackUrl: [${uploadedFile.callbackUrl}].
+          s"""File ready notification: [$callback], sent to service with callbackUrl: [${uploadedFile.callbackUrl}].
              | Response status was: [${httpResponse.status}].""".stripMargin
         )
       }
   }
 
-  private def notifyFailedCallback(quarantinedFile: QuarantinedFile): Future[Unit] = {
+  private def notifyFailedCallback(
+    reference: Reference,
+    failureReason: String,
+    error: String,
+    callbackUrl: URL
+  ): Future[Unit] = {
 
     implicit val hc: HeaderCarrier = HeaderCarrier()
-    val errorDetails               = ErrorDetails("QUARANTINE", quarantinedFile.error)
+    val errorDetails               = ErrorDetails(failureReason, error)
     val callback =
-      FailedCallbackBody(quarantinedFile.reference, failureDetails = errorDetails)
+      FailedCallbackBody(reference, failureDetails = errorDetails)
 
     httpClient
-      .POST[FailedCallbackBody, HttpResponse](quarantinedFile.callbackUrl.toString, callback)
+      .POST[FailedCallbackBody, HttpResponse](callbackUrl.toString, callback)
       .map { httpResponse =>
         logger.info(
-          s"""File failed notification: [${callback}], sent to service with callbackUrl: [${quarantinedFile.callbackUrl}].
+          s"""File failed notification: [$callback], sent to service with callbackUrl: [$callbackUrl].
              | Response status was: [${httpResponse.status}].""".stripMargin
         )
       }

@@ -108,7 +108,7 @@ class UploadController @Inject() (
         case _ => None
       }
 
-    val maybeErrorCaseFile: Option[AWSError] =
+    val maybeForcedTestFileError: Option[AWSError] =
       if (file.filename.startsWith("reject."))
         Some(
           AWSError(
@@ -119,7 +119,7 @@ class UploadController @Inject() (
         )
       else None
 
-    maybeErrorCaseFile.orElse(maybeInvalidContentLength) match {
+    maybeForcedTestFileError.orElse(maybeInvalidContentLength) match {
       case Some(awsError) =>
         form.redirectAfterError match {
           case Some(url) => Redirect(url, queryParamsFor(form.key, awsError), 303)
@@ -156,31 +156,55 @@ class UploadController @Inject() (
     val storedFile =
       storageService.get(fileId).getOrElse(throw new IllegalStateException("The file should have been stored"))
 
-    val foundVirus: ScanningResult =
-      if (file.filename.startsWith("infected."))
-        VirusFound(file.filename.drop(9).takeWhile(_ != '.'))
-      else virusScanner.checkIfClean(storedFile)
-
-    val fileData = foundVirus match {
-      case Clean =>
-        val fileUploadDetails = UploadDetails(
-          clock.instant(),
-          generateChecksum(storedFile.body),
-          mapFilenameToMimeType(filename = file.filename),
-          file.filename
-        )
-        UploadedFile(
-          callbackUrl = new URL(form.callbackUrl),
-          reference = reference,
-          downloadUrl = new URL(buildDownloadUrl(fileId = fileId)),
-          uploadDetails = fileUploadDetails
-        )
-      case VirusFound(details) =>
+    val fileData = maybeForcedTestFileError(file) match {
+      case Some(ForcedTestFileErrorQuarantine(error)) =>
         QuarantinedFile(
           callbackUrl = new URL(form.callbackUrl),
           reference = reference,
-          error = details
+          error = error
         )
+
+      case Some(ForcedTestFileErrorRejected(error)) =>
+        RejectedFile(
+          callbackUrl = new URL(form.callbackUrl),
+          reference = reference,
+          error = error
+        )
+
+      case Some(ForcedTestFileErrorUnknown(error)) =>
+        UnknownReasonFile(
+          callbackUrl = new URL(form.callbackUrl),
+          reference = reference,
+          error = error
+        )
+
+      case None =>
+        val foundVirus: ScanningResult =
+          if (file.filename.startsWith("infected."))
+            VirusFound(file.filename.drop(9).takeWhile(_ != '.'))
+          else virusScanner.checkIfClean(storedFile)
+
+        foundVirus match {
+          case Clean =>
+            val fileUploadDetails = UploadDetails(
+              clock.instant(),
+              generateChecksum(storedFile.body),
+              mapFilenameToMimeType(filename = file.filename),
+              file.filename
+            )
+            UploadedFile(
+              callbackUrl = new URL(form.callbackUrl),
+              reference = reference,
+              downloadUrl = new URL(buildDownloadUrl(fileId = fileId)),
+              uploadDetails = fileUploadDetails
+            )
+          case VirusFound(details) =>
+            QuarantinedFile(
+              callbackUrl = new URL(form.callbackUrl),
+              reference = reference,
+              error = details
+            )
+        }
     }
 
     notificationQueueProcessor.enqueueNotification(fileData)
@@ -220,4 +244,24 @@ class UploadController @Inject() (
     val checksum = MessageDigest.getInstance("SHA-256").digest(fileBytes)
     checksum.map("%02x" format _).mkString
   }
+
+  private def maybeForcedTestFileError(
+    file: MultipartFormData.FilePart[Files.TemporaryFile]
+  ): Option[ForcedTestFileError] = {
+    val name = file.filename
+    name.takeWhile(_ != '.') match {
+      case "infected" =>
+        Some(ForcedTestFileErrorQuarantine(name.drop(9).takeWhile(_ != '.')))
+
+      case "invalid" =>
+        Some(ForcedTestFileErrorRejected(name.drop(8).takeWhile(_ != '.')))
+
+      case "unknown" =>
+        Some(ForcedTestFileErrorUnknown(name.drop(8).takeWhile(_ != '.')))
+
+      case _ =>
+        None
+    }
+  }
+
 }

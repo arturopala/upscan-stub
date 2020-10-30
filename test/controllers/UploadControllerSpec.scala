@@ -55,7 +55,8 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "file",
           "text-to-upload.pdf",
           None,
-          CreateTempFileFromResource("/text-to-upload.txt"))
+          CreateTempFileFromResource("/text-to-upload.txt")
+        )
       val formDataBody: MultipartFormData[TemporaryFile] = new MultipartFormData[TemporaryFile](
         dataParts = Map(
           "x-amz-algorithm"         -> Seq("AWS4-HMAC-SHA256"),
@@ -67,7 +68,7 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "key"                     -> Seq("file-key"),
           "x-amz-meta-callback-url" -> Seq("http://mylocalservice.com/callback")
         ),
-        files    = Seq(filePart),
+        files = Seq(filePart),
         badParts = Nil
       )
       val uploadRequest = FakeRequest().withBody(formDataBody)
@@ -94,16 +95,19 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
       And("the notification service should be called")
       Mockito
         .verify(notificationProcessor)
-        .enqueueNotification(UploadedFile(
-          new URL("http://mylocalservice.com/callback"),
-          Reference("file-key"),
-          new URL(s"http://localhost/download/${fileId.value}"),
-          UploadDetails(
-            initiateDate,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "application/pdf",
-            "text-to-upload.pdf")
-        ))
+        .enqueueNotification(
+          UploadedFile(
+            new URL("http://mylocalservice.com/callback"),
+            Reference("file-key"),
+            new URL(s"http://localhost/download/${fileId.value}"),
+            UploadDetails(
+              initiateDate,
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "application/pdf",
+              "text-to-upload.pdf"
+            )
+          )
+        )
 
       And("a No Content response should be returned")
       val uploadStatus = status(uploadResult)
@@ -117,7 +121,8 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "file",
           "text-to-upload.pdf",
           None,
-          CreateTempFileFromResource("/text-to-upload.txt"))
+          CreateTempFileFromResource("/text-to-upload.txt")
+        )
       val formDataBody: MultipartFormData[TemporaryFile] = new MultipartFormData[TemporaryFile](
         dataParts = Map(
           "x-amz-algorithm"         -> Seq("AWS4-HMAC-SHA256"),
@@ -130,7 +135,7 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "x-amz-meta-callback-url" -> Seq("http://mylocalservice.com/callback"),
           "success_action_redirect" -> Seq("https://localhost")
         ),
-        files    = Seq(filePart),
+        files = Seq(filePart),
         badParts = Nil
       )
       val uploadRequest = FakeRequest().withBody(formDataBody)
@@ -157,16 +162,19 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
       And("the notification service should be called")
       Mockito
         .verify(notificationProcessor)
-        .enqueueNotification(UploadedFile(
-          new URL("http://mylocalservice.com/callback"),
-          Reference("file-key"),
-          new URL(s"http://localhost/download/${fileId.value}"),
-          UploadDetails(
-            initiateDate,
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "application/pdf",
-            "text-to-upload.pdf")
-        ))
+        .enqueueNotification(
+          UploadedFile(
+            new URL("http://mylocalservice.com/callback"),
+            Reference("file-key"),
+            new URL(s"http://localhost/download/${fileId.value}"),
+            UploadDetails(
+              initiateDate,
+              "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "application/pdf",
+              "text-to-upload.pdf"
+            )
+          )
+        )
 
       And("a See Other response should be returned")
       val uploadStatus = status(uploadResult)
@@ -183,7 +191,8 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "file",
           "text-to-upload.txt",
           None,
-          CreateTempFileFromResource("/text-to-upload.txt"))
+          CreateTempFileFromResource("/text-to-upload.txt")
+        )
       val formDataBody: MultipartFormData[TemporaryFile] = new MultipartFormData[TemporaryFile](
         dataParts = Map(
           "x-amz-algorithm"         -> Seq("AWS4-HMAC-SHA256"),
@@ -195,7 +204,7 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "key"                     -> Seq("file-key"),
           "x-amz-meta-callback-url" -> Seq("http://mylocalservice.com/callback")
         ),
-        files    = Seq(filePart),
+        files = Seq(filePart),
         badParts = Nil
       )
       val uploadRequest = FakeRequest().withBody(formDataBody)
@@ -224,7 +233,9 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           QuarantinedFile(
             new URL("http://mylocalservice.com/callback"),
             Reference("file-key"),
-            "This test file failed scanning"))
+            "This test file failed scanning"
+          )
+        )
 
       And("a No Content response should be returned")
       val uploadStatus = status(uploadResult)
@@ -239,7 +250,8 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "file",
           "text-to-upload.txt",
           None,
-          CreateTempFileFromResource("/text-to-upload.txt"))
+          CreateTempFileFromResource("/text-to-upload.txt")
+        )
       val formDataBody: MultipartFormData[TemporaryFile] = new MultipartFormData[TemporaryFile](
         dataParts = Map(
           "x-amz-algorithm"         -> Seq("AWS4-HMAC-SHA256"),
@@ -248,7 +260,7 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "x-amz-signature"         -> Seq("some-signature"),
           "x-amz-meta-callback-url" -> Seq("http://mylocalservice.com/callback")
         ),
-        files    = Seq(filePart),
+        files = Seq(filePart),
         badParts = Nil
       )
       val uploadRequest = FakeRequest().withBody(formDataBody)
@@ -292,7 +304,7 @@ class UploadControllerSpec extends AnyWordSpec with Matchers with GivenWhenThen 
           "key"                     -> Seq("file-key"),
           "x-amz-meta-callback-url" -> Seq("http://mylocalservice.com/callback")
         ),
-        files    = Nil,
+        files = Nil,
         badParts = Nil
       )
       val uploadRequest = FakeRequest().withBody(formDataBody)
