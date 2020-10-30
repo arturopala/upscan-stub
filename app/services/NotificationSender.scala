@@ -87,7 +87,7 @@ class HttpNotificationSender @Inject() (httpClient: HttpClient)(implicit ec: Exe
     uploadedFile match {
       case f: UploadedFile      => notifySuccessfulCallback(f)
       case f: QuarantinedFile   => notifyFailedCallback(f.reference, "QUARANTINE", f.error, f.callbackUrl)
-      case f: RejectedFile      => notifyFailedCallback(f.reference, "REJECT", f.error, f.callbackUrl)
+      case f: RejectedFile      => notifyFailedCallback(f.reference, "REJECTED", f.error, f.callbackUrl)
       case f: UnknownReasonFile => notifyFailedCallback(f.reference, "UNKNOWN", f.error, f.callbackUrl)
     }
 
