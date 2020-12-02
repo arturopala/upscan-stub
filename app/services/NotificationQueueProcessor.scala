@@ -71,8 +71,8 @@ class QueueProcessingActor(notificationSender: NotificationSender, maximumRetryC
       processQueue()
     case EnqueueNotification(file) =>
       queue = queue.enqueue(file)
-      val delay = Random.nextInt(0 + 20)
-      context.system.scheduler.scheduleOnce(FiniteDuration(delay, "s")) {
+      val delay = Random.nextInt(5000)
+      context.system.scheduler.scheduleOnce(FiniteDuration(delay, "ms")) {
         self ! processQueue
       }
     case NotificationProcessedSuccessfully(notification) =>
